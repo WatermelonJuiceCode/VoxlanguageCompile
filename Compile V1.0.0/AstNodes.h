@@ -26,10 +26,10 @@ public:
     virtual std::string headerIncludeLine() const { return ""; }
     virtual bool isTopLevelDefinition() const { return false; }
 
-    // 鈽? 鍛婅瘔璋冪敤鏂硅繖鏄笉鏄竴涓? class锛堢敤浜? NamespaceNode 閲岀殑鍓嶅悜澹版槑锛?
+    // ★ 告诉调用方这是不是一个 class（用于 NamespaceNode 里的前向声明）
     virtual bool isClassLike(std::string& outName) const { return false; }
 
-    // 鈽? 杩斿洖鍓嶅悜澹版槑锛堝惈鍙兘鐨? template 澶达級
+    // ★ 返回前向声明（含可能的 template 头）
     virtual std::string forwardDecl() const { return ""; }
 };
 
@@ -57,7 +57,7 @@ inline std::string escapeCString(const std::string& s){
 
 // ===================== mapTypeToC =====================
 inline std::string mapTypeToC(const std::string& typeName){
-    // ---- 鍩虹绫诲瀷锛氱敤 C++ 鍘熺敓绫诲瀷 ----
+    // ---- 基础类型：用 C++ 原生类型 ----
     if (typeName == "bool")   return "bool";
     if (typeName == "char")   return "char";
     if (typeName == "int")    return "int";
@@ -66,10 +66,10 @@ inline std::string mapTypeToC(const std::string& typeName){
     if (typeName == "float")  return "float";
     if (typeName == "double") return "double";
 
-    // ---- Vox 鑷繁瀹氫箟鐨勭被鍨? ----
+    // ---- Vox 自己定义的类型 ----
     if (typeName == "string") return "vox::String";
 
-    // ---- 瀹氶暱鏁村瀷 ----
+    // ---- 定长整型 ----
     if (typeName == "int8")   return "int8_t";
     if (typeName == "int16")  return "int16_t";
     if (typeName == "int32")  return "int32_t";
@@ -79,7 +79,7 @@ inline std::string mapTypeToC(const std::string& typeName){
     if (typeName == "uint32") return "uint32_t";
     if (typeName == "uint64") return "uint64_t";
 
-    // ---- 鍑芥暟绫诲瀷锛歊eturnType(ParamType1, ParamType2, ...) ----
+    // ---- 函数类型：ReturnType(ParamType1, ParamType2, ...) ----
     {
         auto open = typeName.find('(');
         if (open != std::string::npos && typeName.back() == ')'){
@@ -88,7 +88,7 @@ inline std::string mapTypeToC(const std::string& typeName){
 
             std::string cRet = mapTypeToC(retType);
 
-            // 鍒嗗壊椤跺眰閫楀彿
+            // 分割顶层逗号
             std::vector<std::string> params;
             {
                 int depth = 0;
@@ -144,7 +144,7 @@ inline std::string mapTypeToC(const std::string& typeName){
         return parts;
     };
 
-    // ---- Vox 瀹瑰櫒绫诲瀷 ----
+    // ---- Vox 容器类型 ----
     if (startsWith(typeName, "FinalList<") && typeName.back() == '>'){
         std::string inner = typeName.substr(10, typeName.size() - 11);
         return "vox::FinalList<" + mapTypeToC(trim(inner)) + ">";
@@ -170,7 +170,7 @@ inline std::string mapTypeToC(const std::string& typeName){
         }
     }
 
-    // 鈽? 閫氱敤娉涘瀷锛欶oo<A, B, ...> 鈫? Foo<mapTypeToC(A), mapTypeToC(B), ...>
+    // ★ 通用泛型：Foo<A, B, ...> → Foo<mapTypeToC(A), mapTypeToC(B), ...>
     if (typeName.back() == '>'){
         auto open = typeName.find('<');
         if (open != std::string::npos && open > 0){
@@ -188,12 +188,12 @@ inline std::string mapTypeToC(const std::string& typeName){
     return typeName;
 }
 
-// ===================== 鍙跺瓙鑺傜偣 =====================
+// ===================== 叶子节点 =====================
 
 class NumberNode : public AstNode{
 public:
     int64_t value;
-    std::string rawText;                      // 鈽? 鍘熷瀛楅潰閲忔枃鏈?
+    std::string rawText;                      // ★ 原始字面量文本
 
     explicit NumberNode(int64_t argValue, std::string raw = "")
         : value(argValue), rawText(std::move(raw)) {}
@@ -201,7 +201,7 @@ public:
     std::string toString() const override { return std::to_string(value); }
 
     std::string toC() const override {
-        // 淇濈暀鍘熷瀛楅潰閲忥紙鍗佸叚杩涘埗 / 浜岃繘鍒? / 鍏繘鍒讹級
+        // 保留原始字面量（十六进制 / 二进制 / 八进制）
         if (!rawText.empty()) return rawText;
         return std::to_string(value);
     }
@@ -221,7 +221,7 @@ public:
     std::string toC() const override { return "nullptr"; }
 };
 
-// 鏍规嵁绫诲瀷鐢熸垚"绌哄??"鐨勫瓧闈㈤噺
+// 根据类型生成"空值"的字面量
 inline std::string nullAsType(const std::string& typeName){
     if (typeName == "string") return "\"\"";
     if (typeName == "bool")   return "false";
@@ -233,7 +233,7 @@ inline std::string nullAsType(const std::string& typeName){
         typeName == "uint8" || typeName == "uint16" ||
         typeName == "uint32" || typeName == "uint64")
         return "0";
-    // 鑷畾涔夌被锛氶粯璁ゆ瀯閫?
+    // 自定义类：默认构造
     return mapTypeToC(typeName) + "()";
 }
 
@@ -283,7 +283,7 @@ public:
         return isFloat32 ? s + "f" : s;
     }
     std::string toC() const override {
-        // 淇濊瘉娴偣瀛楅潰閲忎竴瀹氬甫灏忔暟鐐规垨 e锛岄伩鍏嶇敓鎴? C++ 閲岀殑鏁存暟
+        // 保证浮点字面量一定带小数点或 e，避免生成 C++ 里的整数
         std::string s = std::to_string(value);
         if (s.find('.') == std::string::npos && s.find('e') == std::string::npos){
             s += ".0";
@@ -315,8 +315,8 @@ public:
     std::string toString() const override {
         return name + "=" + (value ? value->toString() : std::string());
     }
-    // 姝ｅ父鎯呭喌 CallNode 閲嶆帓鍚庝笉浼氬嚭鐜? NamedArgNode锛?
-    // 淇濈暀涓?涓厹搴曞疄鐜帮紙浠呰緭鍑哄?硷級
+    // 正常情况 CallNode 重排后不会出现 NamedArgNode，
+    // 保留一个兜底实现（仅输出值）
     std::string toC() const override {
         return value ? value->toC() : std::string();
     }
@@ -343,9 +343,9 @@ public:
     std::string toString() const override { return object->toString() + "." + member; }
 
     std::string toC() const override {
-        // 瀹屽叏淇′换 Parser 璁剧疆鐨? namespaceAccess锛?
-        //   - Parser 閫氳繃 _namespaceAliases / _knownNamespaces 鍒ゆ柇鏄笉鏄懡鍚嶇┖闂?
-        //   - 澶у啓寮?澶寸殑鍙橀噺涓嶅簲璇ヨ鑷姩褰撲綔绫诲瀷鍚?
+        // 完全信任 Parser 设置的 namespaceAccess：
+        //   - Parser 通过 _namespaceAliases / _knownNamespaces 判断是不是命名空间
+        //   - 大写开头的变量不应该被自动当作类型名
         if (namespaceAccess){
             return object->toC() + "::" + member;
         }
@@ -375,7 +375,7 @@ public:
     }
 };
 
-// ===================== 璧嬪?艰〃杈惧紡 =====================
+// ===================== 赋值表达式 =====================
 struct AssignPair {
     AstNodePtr target;
     AstNodePtr value;
@@ -448,7 +448,7 @@ public:
     AstNodePtr callee;
     std::vector<AstNodePtr> args;
     int line = 0;
-    bool userInvoke = false;   // 鏄惁璧? _call_
+    bool userInvoke = false;   // 是否走 _call_
 
     CallNode(AstNodePtr c, std::vector<AstNodePtr> a, int srcLine = 0)
         : callee(std::move(c)), args(std::move(a)), line(srcLine) {}
@@ -505,7 +505,7 @@ public:
     }
 };
 
-// ===================== 绫诲瀷妫?娴嬭妭鐐? =====================
+// ===================== 类型检测节点 =====================
 
 class TypeofNode : public AstNode {
 public:
@@ -573,7 +573,7 @@ public:
         std::string r = "enum class " + name + " : int {\n";
         for (std::size_t i = 0; i < members.size(); ++i){
             r += "    " + members[i].name;
-            // 鏄惧紡鍊兼墠鍐? = N锛屽惁鍒欒 C++ 鑷姩閫掑
+            // 显式值才写 = N，否则让 C++ 自动递增
             if (members[i].hasExplicitValue){
                 r += " = " + std::to_string(members[i].value);
             }
@@ -581,7 +581,7 @@ public:
         }
         r += "};\n";
 
-        // 绫诲瀷鍚? + 瀛楃涓插悕鏌ヨ
+        // 类型名 + 字符串名查询
         r += "inline vox::String vox_type_name_of(const " + name + "&) { return \"" + name + "\"; }\n";
         r += "inline vox::String vox_to_string(const " + name + "& v) {\n";
         r += "    switch (v) {\n";
@@ -618,7 +618,7 @@ public:
         return r;
     }
     std::string toC() const override {
-        std::string r = mapTypeToC(className) + "(";   // 鈽? 璧? mapTypeToC
+        std::string r = mapTypeToC(className) + "(";   // ★ 走 mapTypeToC
         for (std::size_t i = 0; i < args.size(); ++i){
             if (i > 0) r += ", ";
             r += args[i]->toC();
@@ -645,7 +645,7 @@ public:
     }
 
     std::string toC() const override {
-        // string(count, char) 鐗逛緥
+        // string(count, char) 特例
         if (targetType == "string" && extraArg){
             return "vox::String(" + expr->toC() + ", " + extraArg->toC() + ")";
         }
@@ -657,7 +657,7 @@ public:
         if (targetType == "float")  return "vox::vox_cast_float(" + expr->toC() + ")";
         if (targetType == "double") return "vox::vox_cast_double(" + expr->toC() + ")";
 
-        // 鍏跺畠绫诲瀷锛堝畾闀挎暣鍨嬨?佺敤鎴风被涔嬮棿杞崲锛夆啋 static_cast
+        // 其它类型（定长整型、用户类之间转换）→ static_cast
         return "static_cast<" + mapTypeToC(targetType) + ">(" + expr->toC() + ")";
     }
 
@@ -688,7 +688,7 @@ public:
         if (!expr) return ";";
         std::string code = expr->toC();
         if (!code.empty() && code.back() == ';'){
-            // 宸叉湁鍒嗗彿锛堜笉甯歌锛夛紝鐩存帴杩斿洖
+            // 已有分号（不常见），直接返回
             if (!hasTrace) return code;
         }
         if (hasTrace){
@@ -711,8 +711,8 @@ public:
     };
     
     struct Attribute {
-        std::string name;                        // 渚嬶細"type"
-        std::vector<std::string> args;           // 渚嬶細{"string"}锛屽瓨瀛楃涓插舰寮?
+        std::string name;                        // 例："type"
+        std::vector<std::string> args;           // 例：{"string"}，存字符串形式
     int line = 0;
 };
 
@@ -732,7 +732,7 @@ class BinaryNode : public AstNode {
             return "(" + left->toString() + " " + tokenTypeName(op) + " " + right->toString() + ")";
         }
         std::string toC() const override {
-            // 鈽? == null 鐗瑰垽
+            // ★ == null 特判
             if (op == TokenType::EqualEqual && std::dynamic_pointer_cast<NullNode>(right)) {
                 return "vox::vox_is_null(" + left->toC() + ")";
             }
@@ -745,7 +745,7 @@ class BinaryNode : public AstNode {
             if (op == TokenType::NotEqual && std::dynamic_pointer_cast<NullNode>(left)) {
                 return "(!vox::vox_is_null(" + right->toC() + "))";
             }
-        // ---- 闄ら浂妫?鏌? ----
+        // ---- 除零检查 ----
         if (op == TokenType::Div){
             return "vox::vox_div(" + left->toC() + ", " + right->toC() + ")";
         }
@@ -753,7 +753,7 @@ class BinaryNode : public AstNode {
             return "vox::vox_mod(" + left->toC() + ", " + right->toC() + ")";
         }
 
-        // ---- 瀛楃涓叉嫾鎺ワ細瀛楅潰閲忚嚜鍔ㄥ寘瑁呮垚 vox::String ----
+        // ---- 字符串拼接：字面量自动包装成 vox::String ----
         if (op == TokenType::Plus){
             bool lStr = std::dynamic_pointer_cast<StringNode>(left)  != nullptr;
             bool rStr = std::dynamic_pointer_cast<StringNode>(right) != nullptr;
@@ -763,7 +763,7 @@ class BinaryNode : public AstNode {
                 return "vox::String(" + l + ") + " + r;
             }
             if (lStr){
-                // 鈽? 鍙充晶鏄惧紡 vox_str()锛岄伩鍏? C++ 闅愬紡杞崲锛堝 Rect 鐨? operator bool锛夊紩鍙戞涔?
+                // ★ 右侧显式 vox_str()，避免 C++ 隐式转换（如 Rect 的 operator bool）引发歧义
                 return "vox::String(" + l + ") + vox::vox_str(" + r + ")";
             }
             if (rStr){
@@ -803,8 +803,8 @@ public:
     std::vector<std::string> names;
     std::vector<AstNodePtr> values;
     bool isConst;
-    bool isGlobal = false;      // 鈫? 椤跺眰澹版槑
-    bool isHeapCaptured = false;   // 鈽? 琚? ref lambda 鎹曡幏锛岄渶鍫嗗垎閰?
+    bool isGlobal = false;      // ← 顶层声明
+    bool isHeapCaptured = false;   // ★ 被 ref lambda 捕获，需堆分配
     int line = 0;
 
 
@@ -850,7 +850,7 @@ public:
         if (isConst) result += "const ";
 
         if (isHeapCaptured){
-            // 鈽? 鍫嗗垎閰嶏細vox::VoxHeap<T> name(init);
+            // ★ 堆分配：vox::VoxHeap<T> name(init);
             result += "vox::VoxHeap<" + baseType + ">";
         } else {
             result += baseType;
@@ -879,7 +879,7 @@ public:
         return false;
     }
 
-    // 鈫? 鏂板锛氬憡璇? ProgramNode 杩欎釜鑺傜偣搴旇鏀惧湪 main 澶栭潰
+    // ← 新增：告诉 ProgramNode 这个节点应该放在 main 外面
     bool isTopLevelDefinition() const override { return isGlobal; }
 
 private:
@@ -889,7 +889,7 @@ private:
     }
 };
 
-// ============ 鍙傛暟绾︽潫 ============
+// ============ 参数约束 ============
 struct Constraint {
     std::string className;              // "vox_mod_Code_edit::Range"
     std::vector<AstNodePtr> args;       // [-10, 10]
@@ -914,7 +914,7 @@ public:
     int line = 0;
     bool isCompound = false;
     std::string compoundOp;
-    std::optional<Constraint> constraint;    // 鈽?
+    std::optional<Constraint> constraint;    // ★
 
     AssignmentNode(std::string argName, AstNodePtr argValue, int srcLine = 0)
         : name(std::move(argName)), target(nullptr),
@@ -934,7 +934,7 @@ public:
             std::string tmp = "_vox_tmp_" + std::to_string(line) + "_" + name;
             std::string rhs;
             if (isCompound && !compoundOp.empty()){
-                // 澶嶅悎锛歵mp = lhs; tmp op= value;
+                // 复合：tmp = lhs; tmp op= value;
                 rhs = "{ auto " + tmp + " = " + lhs + "; "
                     + tmp + " " + compoundOp + " " + (value ? value->toC() : "0")
                     + "; " + constraint->toCCheck(tmp)
@@ -1093,7 +1093,7 @@ struct Param {
     bool isPosOnly = false;
     bool isKwOnly = false;
     AstNodePtr defaultValue;
-    std::optional<Constraint> constraint;    // 鈽?
+    std::optional<Constraint> constraint;    // ★
 };
 
 class BlockNode : public AstNode {
@@ -1191,7 +1191,7 @@ public:
     }
 
     std::string toC() const override {
-        // 鐢熸垚锛歴td::function<Ret(Params)> name = [=](Params) -> Ret { body };
+        // 生成：std::function<Ret(Params)> name = [=](Params) -> Ret { body };
         std::string retC = mapTypeToC(returnType);
         std::string fnType = "std::function<" + retC + "(";
         for (std::size_t i = 0; i < params.size(); ++i){
@@ -1428,15 +1428,15 @@ public:
 
         std::string r = "{\n";
 
-        // 1) 缁戝畾鍙凯浠ｅ璞? + 鍒涘缓杩唬鍣?
+        // 1) 绑定可迭代对象 + 创建迭代器
         for (std::size_t i = 0; i < n; ++i) {
             std::string idx = std::to_string(i);
             r += "    auto&& __vox_coll_" + idx + " = " + vars[i].iterable->toC() + ";\n";
             r += "    auto __vox_it_" + idx + " = __vox_coll_" + idx + "._begin_();\n";
         }
 
-        // 2) 寰幆澶达細鎵?鏈夎凯浠ｅ櫒閮界粨鏉熸椂鍋滄
-        //    鐢? || 鑰屼笉鏄? && 鈥斺?? 寰幆鍒版渶闀?
+        // 2) 循环头：所有迭代器都结束时停止
+        //    用 || 而不是 && —— 循环到最长
         r += "    for (; ";
         for (std::size_t i = 0; i < n; ++i) {
             if (i > 0) r += " || ";
@@ -1444,14 +1444,14 @@ public:
         }
         r += "; ) {\n";
 
-        // 3) 缁戝畾鍙橀噺
+        // 3) 绑定变量
         if (n == 1) {
-            // 鍗曞彉閲忥細绾? T 鈥斺?? 鍚戝悗鍏煎锛岄浂鎴愭湰
+            // 单变量：纯 T —— 向后兼容，零成本
             r += "        " + mapTypeToC(vars[0].type) + " " + vars[0].name
                + " = __vox_it_0._current_();\n";
             r += "        __vox_it_0._next_();\n";
         } else {
-            // 澶氬彉閲忥細std::optional<T> 鈥斺?? null 琛ㄧず璇ラ泦鍚堝凡鑰楀敖
+            // 多变量：std::optional<T> —— null 表示该集合已耗尽
             for (std::size_t i = 0; i < n; ++i) {
                 std::string idx = std::to_string(i);
                 std::string cType = mapTypeToC(vars[i].type);
@@ -1463,10 +1463,10 @@ public:
             }
         }
 
-        // 4) 寰幆浣?
+        // 4) 循环体
         r += body->toC();
 
-        // 5) 缁撴潫
+        // 5) 结束
         r += "    }\n";
         r += "}";
         return r;
@@ -1535,7 +1535,7 @@ public:
             msgArg = "((" + msgC + ").raw())";
         }
 
-        // 鈽? 鐢熸垚 locals map
+        // ★ 生成 locals map
         std::string localsArg = "std::map<std::string, std::string>{";
         for (std::size_t i = 0; i < locals.size(); ++i){
             if (i > 0) localsArg += ", ";
@@ -1573,7 +1573,7 @@ public:
     std::shared_ptr<BlockNode> body;
     bool isExtern;
     int line = 0;
-    std::vector<std::string> templateParams;   // 鈽? 妯℃澘鍙傛暟鍚嶅垪琛紙绌鸿〃绀洪潪妯℃澘锛?
+    std::vector<std::string> templateParams;   // ★ 模板参数名列表（空表示非模板）
 
     FunctionDeclNode(std::string retType, std::string funcName,
                      std::vector<Param> argParams,
@@ -1596,7 +1596,7 @@ public:
 
     std::string toC() const override {
         if (isExtern){
-            // ...锛堜繚鎸佸師鏍凤級...
+            // ...（保持原样）...
             std::string result = mapTypeToC(returnType) + " " + name + "(";
             for (std::size_t i = 0; i < params.size(); ++i){
                 if (i > 0) result += ", ";
@@ -1613,7 +1613,7 @@ public:
             if (p.isVariadic){ hasVariadic = true; break; }
         }
 
-        // 鈽? 缁勮 template 澶?
+        // ★ 组装 template 头
         std::string templateHeader;
         if (!templateParams.empty() || hasVariadic){
             templateHeader = "template <";
@@ -1712,7 +1712,7 @@ public:
         }
         return r;
     }
-    bool isTopLevelDefinition() const override { return false; }  // 鈽? ProgramNode 宸插崟鐙緭鍑?
+    bool isTopLevelDefinition() const override { return false; }  // ★ ProgramNode 已单独输出
 };
 
 class NamespaceNode : public AstNode {
@@ -1730,13 +1730,13 @@ public:
         return "Namespace(" + name + (importAll ? ".*" : "") + ")";
     }
 
-    // 閫掑綊鏀堕泦鎵?鏈? header include
+    // 递归收集所有 header include
     void collectIncludes(std::string& out) const {
         for (const auto& s : statements){
             if (s->isHeaderInclude()){
                 out += s->headerIncludeLine() + "\n";
             } else if (auto ns = std::dynamic_pointer_cast<NamespaceNode>(s)){
-                ns->collectIncludes(out);   // <-- 閫掑綊
+                ns->collectIncludes(out);   // <-- 递归
             }
         }
     }
@@ -1754,7 +1754,7 @@ public:
 
         r += "namespace " + name + " {\n";
 
-        // 鈽? 鍏堣緭鍑烘墍鏈? class 鐨勫墠鍚戝０鏄庯紙鍚? template 澶达級
+        // ★ 先输出所有 class 的前向声明（含 template 头）
         for (const auto& s : statements){
             std::string decl = s->forwardDecl();
             if (!decl.empty()){
@@ -1766,7 +1766,7 @@ public:
         for (const auto& s : statements){
             if (s->isHeaderInclude()) continue;
             if (auto ns = std::dynamic_pointer_cast<NamespaceNode>(s)){
-                r += ns->toC(true) + "\n";   // <-- 宓屽鏃惰烦杩? include
+                r += ns->toC(true) + "\n";   // <-- 嵌套时跳过 include
             } else {
                 r += s->toC() + "\n";
             }
@@ -1795,9 +1795,9 @@ public:
 
 // ===================== try / catch / finally / break / continue / switch =====================
 struct CatchClause {
-    std::string exceptionType;              // 寮傚父绫诲瀷鍚嶏紙濡? "ValueException"锛?
-    std::string variableName;               // 缁戝畾鍙橀噺鍚嶏紙鍙负绌猴級
-    std::shared_ptr<BlockNode> body;        // catch 浣?
+    std::string exceptionType;              // 异常类型名（如 "ValueException"）
+    std::string variableName;               // 绑定变量名（可为空）
+    std::shared_ptr<BlockNode> body;        // catch 体
 };
 
 class TryNode : public AstNode {
@@ -1831,7 +1831,7 @@ public:
         if (tryBody) tryPart += tryBody->toC();
         tryPart += "}";
         for (const auto& c : catches){
-            // 鍏抽敭锛氬姞 vox:: 鍓嶇紑
+            // 关键：加 vox:: 前缀
             tryPart += " catch (const vox::" + c.exceptionType + "& " + c.variableName + ") {\n";
             tryPart += c.body->toC();
             tryPart += "}";
@@ -1841,7 +1841,7 @@ public:
             return tryPart;
         }
 
-        // finally锛氭甯歌矾寰勬墽琛屼竴娆★紝寮傚父璺緞鎵ц涓?娆″苟閲嶆柊鎶涘嚭
+        // finally：正常路径执行一次，异常路径执行一次并重新抛出
         std::string r;
         r += "try {\n";
         r += "    " + tryPart + "\n";
@@ -1879,7 +1879,7 @@ public:
 };
 
 struct SwitchCase {
-    AstNodePtr value;                       // case 鐨勫?硷紙nullptr = default锛?
+    AstNodePtr value;                       // case 的值（nullptr = default）
     std::shared_ptr<BlockNode> body;
 };
 
@@ -1925,7 +1925,7 @@ public:
     }
 };
 
-// ===================== 绫荤郴缁? =====================
+// ===================== 类系统 =====================
 struct ClassField {
     std::string access;
     bool isStatic;
@@ -1951,12 +1951,12 @@ public:
     std::vector<Attribute> attributes;
     std::string name;
     std::vector<std::string> bases;
-    std::vector<bool> baseIsInterface;      // 鈫? 鍜? bases 涓?涓?瀵瑰簲
+    std::vector<bool> baseIsInterface;      // ← 和 bases 一一对应
     std::vector<ClassField> fields;
     std::vector<ClassMethod> methods;
     bool isStruct = false;
     bool isInterface = false;
-    std::vector<std::string> templateParams;   // 鈽?
+    std::vector<std::string> templateParams;   // ★
 
     ClassNode() = default;
     ClassNode(std::string n, std::vector<std::string> b)
@@ -1976,10 +1976,10 @@ public:
     }
 
     std::string toC() const override {
-        // ========== interface锛氱函铏氱被 ==========
+        // ========== interface：纯虚类 ==========
         if (isInterface) {
             std::string r;
-            // 鈽? 妯℃澘澶?
+            // ★ 模板头
             if (!templateParams.empty()){
                 r += "template <";
                 for (std::size_t i = 0; i < templateParams.size(); ++i){
@@ -1995,7 +1995,7 @@ public:
                     if (i > 0) r += ", ";
                     bool isIface = (i < baseIsInterface.size()) ? baseIsInterface[i] : true;
                     if (isIface){
-                        r += "virtual public " + bases[i];   // 鈽? 铏氱户鎵?
+                        r += "virtual public " + bases[i];   // ★ 虚继承
                     } else {
                         r += "public " + bases[i];
                     }
@@ -2005,7 +2005,7 @@ public:
             r += "public:\n";
             r += "    virtual ~" + name + "() = default;\n\n";
 
-            // 绾櫄鏂规硶
+            // 纯虚方法
             for (const auto& m : methods){
                 r += "    virtual " + mapTypeToC(m.returnType) + " " + m.name + "(";
                 for (std::size_t i = 0; i < m.params.size(); ++i){
@@ -2018,10 +2018,10 @@ public:
                 r += ") = 0;\n";
             }
 
-            // 鈽? 绫诲瀷鍚?
+            // ★ 类型名
             r += "\n    virtual vox::String vox_type_name() const { return \"" + name + "\"; }\n";
 
-            // 鈽? 绫诲瀷妫?鏌ワ紙閾惧紡锛?
+            // ★ 类型检查（链式）
             r += "    virtual bool vox_is_type(const vox::String& t) const {\n";
             r += "        if (t == \"" + name + "\") return true;\n";
             for (std::size_t i = 0; i < bases.size(); ++i){
@@ -2037,7 +2037,7 @@ public:
             return r;
         }
         std::string r;
-        // 鈽? 妯℃澘澶?
+        // ★ 模板头
         if (!templateParams.empty()){
             r += "template <";
             for (std::size_t i = 0; i < templateParams.size(); ++i){
@@ -2053,7 +2053,7 @@ public:
                 if (i > 0) r += ", ";
                 bool isIface = (i < baseIsInterface.size()) ? baseIsInterface[i] : false;
                 if (isIface){
-                    r += "virtual public " + bases[i];   // 鈽? interface 鐢ㄨ櫄缁ф壙
+                    r += "virtual public " + bases[i];   // ★ interface 用虚继承
                 } else {
                     r += "public " + bases[i];
                 }
@@ -2061,25 +2061,25 @@ public:
         }
         r += " {\n";
 
-        // ========== public 鍖哄煙 ==========
+        // ========== public 区域 ==========
         r += "public:\n";
 
-        // 鈽? 1. 榛樿鏋勯?狅紙淇濈暀鍘熸湁 _init_ 鐢熸垚鐨勬瀯閫狅級
-        //    锛坃init_ 浼氳 ClassMethod 鏈哄埗鐢熸垚涓哄悓鍚嶆瀯閫犲嚱鏁帮紝杩欓噷涓嶅姩锛?
+        // ★ 1. 默认构造（保留原有 _init_ 生成的构造）
+        //    （_init_ 会被 ClassMethod 机制生成为同名构造函数，这里不动）
 
-        // 鈽? 2. 鏄惧紡鎷疯礉鏋勯?狅紙鎴愬憳鍒濆鍖栧垪琛ㄥ舰寮忥級
+        // ★ 2. 显式拷贝构造（成员初始化列表形式）
         r += "    " + name + "(const " + name + "& other)";
 
-        // 鏋勯?犲垵濮嬪寲鍒楄〃锛堥潪闈欐?佸瓧娈? + 鍩虹被锛?
+        // 构造初始化列表（非静态字段 + 基类）
         std::vector<std::string> initList;
         for (const auto& f : fields){
-            if (f.isStatic) continue;    // 鈫? 闈欐?佸瓧娈典笉鑳藉嚭鐜板湪鍒濆鍖栧垪琛?
+            if (f.isStatic) continue;    // ← 静态字段不能出现在初始化列表
             initList.push_back(f.name + "(other." + f.name + ")");
         }
         for (std::size_t i = 0; i < bases.size(); ++i){
             bool isIface = (i < baseIsInterface.size()) ? baseIsInterface[i] : false;
             if (isIface){
-                initList.push_back(bases[i] + "(other)");   // 铏氬熀绫讳篃鐓у啓锛孋++ 浼氭纭鐞?
+                initList.push_back(bases[i] + "(other)");   // 虚基类也照写，C++ 会正确处理
             } else {
                 initList.push_back(bases[i] + "(other)");
             }
@@ -2095,17 +2095,17 @@ public:
         }
         r += "{}\n\n";
 
-        // 鈽? 3. 鏄惧紡鎷疯礉璧嬪??
+        // ★ 3. 显式拷贝赋值
         r += "    " + name + "& operator=(const " + name + "& other) {\n";
         r += "        if (this != &other) {\n";
         for (const auto& f : fields){
-            if (f.isStatic) continue;    // 鈫? 闈欐?佸瓧娈典笉灞炰簬瀵硅薄
+            if (f.isStatic) continue;    // ← 静态字段不属于对象
             r += "            this->" + f.name + " = other." + f.name + ";\n";
         }
         for (std::size_t i = 0; i < bases.size(); ++i){
             bool isIface = (i < baseIsInterface.size()) ? baseIsInterface[i] : false;
             if (!isIface){
-                // interface 鏃犲瓧娈碉紝鍙烦杩囪祴鍊?
+                // interface 无字段，可跳过赋值
                 r += "            " + bases[i] + "::operator=(other);\n";
             }
         }
@@ -2113,7 +2113,7 @@ public:
         r += "        return *this;\n";
         r += "    }\n\n";
 
-        // 鈽? 榛樿鏋勯?狅紙鐢ㄦ埛娌″畾涔夋棤鍙? _init_ 鏃舵墠鐢熸垚锛?
+        // ★ 默认构造（用户没定义无参 _init_ 时才生成）
         bool hasDefaultCtor = false;
         for (const auto& m : methods){
             if (m.isCtor && m.params.empty()){
@@ -2125,20 +2125,20 @@ public:
             r += "    " + name + "() = default;\n\n";
         }
 
-        // 鈽? 鏃犲壇浣滅敤鏋勯?狅紙涓撶敤浜庡叏灞?鍙橀噺澹版槑锛岄伩鍏嶈Е鍙戠敤鎴? _init_锛?
+        // ★ 无副作用构造（专用于全局变量声明，避免触发用户 _init_）
         r += "    " + name + "(vox::NoInit) {}\n\n";
 
-        // ========== struct锛氳嚜鍔ㄧ敓鎴愭瀯閫? / 杩愮畻绗? / toString ==========
+        // ========== struct：自动生成构造 / 运算符 / toString ==========
         if (isStruct){
-            // 鏄惁宸叉湁鐢ㄦ埛鑷畾涔夋瀯閫犲嚱鏁?
+            // 是否已有用户自定义构造函数
             bool hasCtor = false;
             for (const auto& m : methods){
                 if (m.isCtor){ hasCtor = true; break; }
             }
 
-            // 鈽? 鑷姩鏋勯?狅紙鐢ㄦ埛娌″啓 _init_ 鎵嶇敓鎴愶級
+            // ★ 自动构造（用户没写 _init_ 才生成）
             if (!hasCtor){
-                // 瀛楁鏋勯?狅紙榛樿鏋勯?犵敱澶栧眰缁熶竴鐢熸垚锛?
+                // 字段构造（默认构造由外层统一生成）
                 bool anyField = false;
                 for (const auto& f : fields){
                     if (!f.isStatic){ anyField = true; break; }
@@ -2164,7 +2164,7 @@ public:
                 }
             }
 
-            // 鈽? toString
+            // ★ toString
             r += "    vox::String toString() const {\n";
             r += "        vox::String _r = \"" + name + "(\";\n";
             {
@@ -2184,10 +2184,10 @@ public:
             r += "    }\n\n";
         }
 
-        // 鈽? 绫诲瀷鍚嶏紙typeof 鐢級
+        // ★ 类型名（typeof 用）
         r += "    virtual vox::String vox_type_name() const { return \"" + name + "\"; }\n\n";
 
-        // 鈽? 绫诲瀷妫?鏌ワ紙is 鐢紝鏀寔缁ф壙锛?
+        // ★ 类型检查（is 用，支持继承）
         if (bases.empty()){
             r += "    bool vox_is_type(const vox::String& t) const {\n";
             r += "        return t == \"" + name + "\";\n";
@@ -2202,7 +2202,7 @@ public:
             r += "    }\n\n";
         }
 
-        // ========== 鍘熸湁鐨? fields / methods 杈撳嚭 ==========
+        // ========== 原有的 fields / methods 输出 ==========
 
         auto emitFields = [&](const std::string& access){
             for (const auto& f : fields){
@@ -2230,7 +2230,7 @@ public:
                     r += rt + " " + m.name + "(";
 
                     bool first = true;
-                    // 鍏堣緭鍑洪潪鍙彉鍙傛暟
+                    // 先输出非可变参数
                     for (const auto& p : m.params){
                         if (p.isVariadic) continue;
                         if (!first) r += ", ";
@@ -2242,7 +2242,7 @@ public:
                             r += " = " + p.defaultValue->toC();
                         }
                     }
-                    // 鍐嶈緭鍑哄彲鍙樺弬鏁板寘
+                    // 再输出可变参数包
                     for (const auto& p : m.params){
                         if (!p.isVariadic) continue;
                         if (!first) r += ", ";
@@ -2307,7 +2307,7 @@ public:
         r += "private:\n";
         emitFields("private"); emitMethods("private");
 
-        // 鈽? 鏈? _bool_ 榄旀硶鏂规硶鏃讹紝鐢熸垚 operator bool锛堜緵 if / && / check 绛変娇鐢級
+        // ★ 有 _bool_ 魔法方法时，生成 operator bool（供 if / && / check 等使用）
         for (const auto& m : methods){
             if (m.name == "_bool_" && !m.isStatic && !m.isCtor && m.params.empty()){
                 r += "public:\n";
@@ -2318,7 +2318,7 @@ public:
 
         r += "};";
 
-        // ========== 鑷敱鍑芥暟锛氳繍绠楃閲嶈浇锛堝繀椤诲湪 class 澶栭儴锛侊級 ==========
+        // ========== 自由函数：运算符重载（必须在 class 外部！） ==========
         std::set<std::string> magic;
         for (const auto& m : methods){
             if (m.isStatic || m.isCtor) continue;
@@ -2354,7 +2354,7 @@ public:
         emitBinOp("_gt_",  ">");
         emitBinOp("_ge_",  ">=");
 
-        // struct 鑷姩 == 锛堢敤鎴锋病瀹氫箟 _eq_ 鏃讹級
+        // struct 自动 == （用户没定义 _eq_ 时）
         if (isStruct && magic.count("_eq_") == 0){
             r += "inline bool operator==(const " + name + "& _a, const " + name + "& _b) {\n";
             std::string cmp;
@@ -2368,7 +2368,7 @@ public:
             r += "}\n\n";
         }
 
-        // 鑷姩 != 锛堢敤鎴锋病瀹氫箟 _ne_锛屼絾 == 鍙敤鏃讹級
+        // 自动 != （用户没定义 _ne_，但 == 可用时）
         if (magic.count("_ne_") == 0){
             if (isStruct || magic.count("_eq_")){
                 r += "inline bool operator!=(const " + name + "& _a, const " + name + "& _b) {\n";
@@ -2377,7 +2377,7 @@ public:
             }
         }
 
-        // 鑷姩 > <= >= 锛堢敤鎴峰畾涔変簡 _lt_ 鏃讹級
+        // 自动 > <= >= （用户定义了 _lt_ 时）
         if (magic.count("_lt_")){
             if (magic.count("_gt_") == 0){
                 r += "inline bool operator>(const " + name + "& _a, const " + name + "& _b) {\n";
@@ -2472,7 +2472,7 @@ public:
         result += "#include <functional>\n\n";
         result += "#include \"vox_runtime.h\"\n\n";
 
-        // ---- 椤跺眰 ImportNode锛?#include "xxx.h"锛? ----
+        // ---- 顶层 ImportNode（#include "xxx.h"） ----
         std::string topIncludes;
         for (const auto& stmt : statements){
             if (stmt->isHeaderInclude()){
@@ -2483,7 +2483,7 @@ public:
             result += topIncludes + "\n";
         }
 
-        // ---- 鐢ㄦ埛鑷畾涔夊紓甯? ----
+        // ---- 用户自定义异常 ----
         std::vector<std::string> userExceptions;
         for (const auto& s : statements){
             if (auto c = std::dynamic_pointer_cast<ClassNode>(s)){
@@ -2511,14 +2511,14 @@ public:
             result += "    };\n\n";
         }
 
-        // ---- 鍏堣緭鍑洪《灞? ExternBlockNode ----
+        // ---- 先输出顶层 ExternBlockNode ----
         for (const auto& stmt : statements){
             if (std::dynamic_pointer_cast<ExternBlockNode>(stmt)){
                 result += stmt->toC() + "\n";
             }
         }
 
-        // ---- 杈撳嚭 namespace / class / enum锛堣烦杩囧叏灞?鍙橀噺鍜屽嚱鏁帮級 ----
+        // ---- 输出 namespace / class / enum（跳过全局变量和函数） ----
         for (const auto& stmt : statements){
             if (stmt->isTopLevelDefinition()){
                 if (auto var = std::dynamic_pointer_cast<VariableDeclNode>(stmt)){
@@ -2530,7 +2530,7 @@ public:
             }
         }
 
-        // ---- 鈽? 鏀堕泦鎵?鏈夐《灞傛灇涓惧悕锛堢敤浜庡叏灞?鍙橀噺澹版槑鍒ゆ柇锛? ----
+        // ---- ★ 收集所有顶层枚举名（用于全局变量声明判断） ----
         std::set<std::string> enumNames;
         for (const auto& stmt : statements){
             if (auto en = std::dynamic_pointer_cast<EnumNode>(stmt)){
@@ -2538,14 +2538,14 @@ public:
             }
         }
 
-        // ---- 杈撳嚭鍏ㄥ眬鍙橀噺鐨?"澹版槑"锛堜笉鍒濆鍖栵級 ----
+        // ---- 输出全局变量的"声明"（不初始化） ----
         auto isBuiltinCType = [&](const std::string& t){
             return t == "int" || t == "int8_t" || t == "int16_t" || t == "int32_t" || t == "int64_t"
                 || t == "uint8_t" || t == "uint16_t" || t == "uint32_t" || t == "uint64_t"
                 || t == "bool" || t == "char" || t == "float" || t == "double"
                 || t == "void"
                 || t.compare(0, 5, "vox::") == 0
-                || t.compare(0, 14, "std::function<") == 0   // 鈽? 鍑芥暟绫诲瀷
+                || t.compare(0, 14, "std::function<") == 0   // ★ 函数类型
                 || enumNames.count(t) > 0;
         };
 
@@ -2575,7 +2575,7 @@ public:
         }
         result += "\n";
 
-        // ---- 鈽? 杈撳嚭鎵?鏈夐《灞傚嚱鏁扮殑鍓嶅悜澹版槑锛堣В鍐冲墠鍚戝紩鐢級----
+        // ---- ★ 输出所有顶层函数的前向声明（解决前向引用）----
         for (const auto& stmt : statements){
             if (auto fn = std::dynamic_pointer_cast<FunctionDeclNode>(stmt)){
                 if (fn->isExtern) continue;
@@ -2585,7 +2585,7 @@ public:
                     if (p.isVariadic){ hasVariadic = true; break; }
                 }
 
-                // 鈽? 鍚堝苟妯℃澘鍙傛暟 + variadic
+                // ★ 合并模板参数 + variadic
                 if (!fn->templateParams.empty() || hasVariadic){
                     result += "template <";
                     bool first = true;
@@ -2616,7 +2616,7 @@ public:
         }
         result += "\n";
 
-        // ---- 鏈?鍚庤緭鍑烘墍鏈夐《灞傚嚱鏁板畾涔? ----
+        // ---- 最后输出所有顶层函数定义 ----
         for (const auto& stmt : statements){
             if (auto fn = std::dynamic_pointer_cast<FunctionDeclNode>(stmt)){
                 result += fn->toC();
@@ -2631,7 +2631,7 @@ public:
         for (const auto& stmt : statements){
             if (stmt->isHeaderInclude()) continue;
 
-            // 璺宠繃鎵?鏈?"瀹氫箟绫?"鑺傜偣
+            // 跳过所有"定义类"节点
             if (std::dynamic_pointer_cast<FunctionDeclNode>(stmt)) continue;
             if (std::dynamic_pointer_cast<ClassNode>(stmt)) continue;
             if (std::dynamic_pointer_cast<NamespaceNode>(stmt)) continue;
@@ -2641,7 +2641,7 @@ public:
             if (std::dynamic_pointer_cast<EndNode>(stmt)) continue;
             if (std::dynamic_pointer_cast<EnumNode>(stmt)) continue;
 
-            // 鍏ㄥ眬鍙橀噺锛氬湪 main 閲屾墜鍔ㄧ敓鎴?"璧嬪??"
+            // 全局变量：在 main 里手动生成"赋值"
             if (auto var = std::dynamic_pointer_cast<VariableDeclNode>(stmt)){
                 if (var->isGlobal){
                     for (std::size_t i = 0; i < var->names.size(); ++i){
